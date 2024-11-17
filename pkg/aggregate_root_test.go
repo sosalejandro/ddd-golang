@@ -1,7 +1,10 @@
 package pkg_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -93,9 +96,11 @@ func newLibrary() *library {
 func TestAggregateRoot(t *testing.T) {
 	t.Run("should handle valid book operations", func(t *testing.T) {
 		// Arrange
+		ctx := context.Background()
+
 		lib := newLibrary()
 		errCh := make(chan error, 1)
-		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
 		defer closer()
 
 		// Act
@@ -110,9 +115,11 @@ func TestAggregateRoot(t *testing.T) {
 
 	t.Run("should detect invalid book state", func(t *testing.T) {
 		// Arrange
+		ctx := context.Background()
+
 		lib := newLibrary()
 		errCh := make(chan error, 1)
-		_, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
+		_, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
 		defer closer()
 
 		// Act
@@ -131,9 +138,11 @@ func TestAggregateRoot(t *testing.T) {
 
 	t.Run("should maintain version across operations", func(t *testing.T) {
 		// Arrange
+		ctx := context.Background()
+
 		lib := newLibrary()
-		errCh := make(chan error, 2)
-		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
+		errCh := make(chan error, 1)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
 		defer closer()
 
 		// Act & Assert
@@ -152,9 +161,11 @@ func TestAggregateRoot(t *testing.T) {
 
 	t.Run("should load history correctly", func(t *testing.T) {
 		// Arrange
+		ctx := context.Background()
+
 		lib := newLibrary()
 		errCh := make(chan error, 1)
-		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
 		defer closer()
 
 		history := []pkg.IDomainEvent{
@@ -173,34 +184,115 @@ func TestAggregateRoot(t *testing.T) {
 		assert.Empty(t, ar.GetChanges())
 	})
 
-	// t.Run("should handle concurrent operations", func(t *testing.T) {
-	// 	// Arrange
-	// 	lib := newLibrary()
-	// 	errCh := make(chan error, 10)
-	// 	_, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
-	// 	defer closer()
+	t.Run("should handle sequential add and remove operations", func(t *testing.T) {
+		// Arrange
+		ctx := context.Background()
 
-	// 	// Act
-	// 	go lib.AddBook("Book1")
-	// 	go lib.AddBook("Book2")
-	// 	go lib.RemoveBook("Book1")
+		lib := newLibrary()
+		errCh := make(chan error, 1)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
+		defer closer()
 
-	// 	// Assert
-	// 	time.Sleep(200 * time.Millisecond)
-	// 	assert.Nil(t, lib.GetBook("Book1"))
-	// 	assert.NotNil(t, lib.GetBook("Book2"))
-	// })
+		expectedEvents := 500
+
+		// Act
+		for i := 0; i < 250; i++ {
+			lib.AddBook(fmt.Sprintf("Book%d", i))
+			lib.RemoveBook(fmt.Sprintf("Book%d", i))
+		}
+
+		// Assert
+		assert.EventuallyWithT(t, func(c *assert.CollectT) {
+			assert.Equal(c, ar.GetProcessedEventsCount(), expectedEvents)
+		}, 2*time.Second, 10*time.Millisecond, "not all events were processed")
+
+		assert.Equal(t, 499, ar.Version)
+		assert.Len(t, ar.GetChanges(), expectedEvents)
+		for i := 0; i < 250; i++ {
+			assert.Nil(t, lib.GetBook(fmt.Sprintf("Book%d", i)))
+		}
+	})
+
+	t.Run("should handle 500 sequential add operations", func(t *testing.T) {
+		// Arrange
+		ctx := context.Background()
+
+		lib := newLibrary()
+		errCh := make(chan error, 1)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
+		defer closer()
+
+		expectedEvents := 500
+
+		// Act
+		for i := 0; i < 500; i++ {
+			lib.AddBook(fmt.Sprintf("Book%d", i))
+		}
+
+		// Assert
+		assert.EventuallyWithT(t, func(c *assert.CollectT) {
+			assert.Equal(c, ar.GetProcessedEventsCount(), expectedEvents)
+		}, 2*time.Second, 10*time.Millisecond, "not all events were processed")
+
+		assert.Equal(t, 499, ar.Version)
+		assert.Len(t, ar.GetChanges(), expectedEvents)
+		for i := 0; i < 500; i++ {
+			assert.NotNil(t, lib.GetBook(fmt.Sprintf("Book%d", i)))
+		}
+	})
+
+	t.Run("should handle 500 sequential remove operations", func(t *testing.T) {
+		// Arrange
+		ctx := context.Background()
+
+		lib := newLibrary()
+		errCh := make(chan error, 1)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
+		defer closer()
+
+		expectedEvents := 1000 // 500 adds + 500 removes
+
+		// Add books first
+		for i := 0; i < 500; i++ {
+			lib.AddBook(fmt.Sprintf("Book%d", i))
+		}
+
+		// Act
+		for i := 0; i < 500; i++ {
+			lib.RemoveBook(fmt.Sprintf("Book%d", i))
+		}
+		// Assert
+		assert.EventuallyWithT(t, func(c *assert.CollectT) {
+			assert.Equal(c, ar.GetProcessedEventsCount(), expectedEvents)
+		}, 2*time.Second, 10*time.Millisecond, "not all events were processed")
+
+		assert.Equal(t, 999, ar.Version)
+		assert.Len(t, ar.GetChanges(), expectedEvents)
+		for i := 0; i < 500; i++ {
+			assert.Nil(t, lib.GetBook(fmt.Sprintf("Book%d", i)))
+		}
+
+		// Check error channel
+		select {
+		case err := <-errCh:
+			t.Fatalf("unexpected error: %v", err)
+		default:
+			// No errors - good
+		}
+	})
 
 	t.Run("should clear changes without affecting state", func(t *testing.T) {
 		// Arrange
+		ctx := context.Background()
+
 		lib := newLibrary()
 		errCh := make(chan error, 1)
-		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
 		defer closer()
 
 		// Act
 		lib.AddBook("Test Book")
-		time.Sleep(50 * time.Millisecond)
+		// time.Sleep(50 * time.Millisecond)
 		initialVersion := ar.Version
 		ar.ClearChanges()
 
@@ -209,26 +301,108 @@ func TestAggregateRoot(t *testing.T) {
 		assert.Empty(t, ar.GetChanges())
 		assert.Equal(t, initialVersion, ar.Version)
 	})
+
+	t.Run("should handle valid book operations with context", func(t *testing.T) {
+		// Arrange
+		ctx := context.Background()
+
+		lib := newLibrary()
+		errCh := make(chan error, 1)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
+		defer closer()
+
+		// Act
+		lib.AddBook("Clean Code")
+
+		// Assert
+		assert.Eventually(t, func() bool {
+			return lib.GetBook("Clean Code") != nil
+		}, 50*time.Millisecond, 5*time.Millisecond)
+		assert.Equal(t, 0, ar.Version)
+		assert.Len(t, ar.GetChanges(), 1)
+	})
+
+	t.Run("should close channel on context cancellation", func(t *testing.T) {
+		// Arrange
+		ctx, cancel := context.WithCancel(context.Background())
+		lib := newLibrary()
+		errCh := make(chan error, 1)
+		pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
+
+		// Act
+		lib.AddBook("Test Book")
+		cancel() // Cancel context
+
+		// Assert - try to send after context cancelled
+		time.Sleep(50 * time.Millisecond) // Allow time for cleanup
+
+		// This should panic if channel isn't closed - recover and assert
+		recovered := false
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					recovered = true
+				}
+			}()
+			lib.AddBook("Should Fail")
+		}()
+
+		assert.True(t, recovered, "expected panic when writing to closed channel")
+	})
+
+	t.Run("should timeout if operation takes too long", func(t *testing.T) {
+		// Arrange
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+
+		lib := newLibrary()
+		errCh := make(chan error, 1)
+		pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
+		// defer closer()
+
+		// Act & Assert
+		time.Sleep(20 * time.Millisecond) // Wait for timeout
+		recovered := false
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					recovered = true
+				}
+			}()
+			lib.AddBook("Should Fail")
+		}()
+
+		assert.True(t, recovered, "expected panic when writing to closed channel after timeout")
+	})
 }
 
 func BenchmarkAggregateRoot(b *testing.B) {
 	b.Run("Sequential AddBook", func(b *testing.B) {
+		ctx, _ := context.WithTimeout(context.Background(), 10000*time.Millisecond)
+		// defer cancel()
+
 		lib := newLibrary()
-		errCh := make(chan error, b.N)
-		_, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
+		errCh := make(chan error, 1)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
 		defer closer()
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			lib.AddBook("Book")
-			time.Sleep(1 * time.Millisecond)
+		}
+
+		for ar.GetProcessedEventsCount() < b.N {
+			runtime.Gosched()
 		}
 	})
 
 	b.Run("Load History", func(b *testing.B) {
+		ctx, _ := context.WithTimeout(context.Background(), 10000*time.Millisecond)
+		// defer cancel()
+
 		lib := newLibrary()
 		errCh := make(chan error, 1)
-		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](lib, errCh)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
 		defer closer()
 
 		history := []pkg.IDomainEvent{
@@ -239,6 +413,33 @@ func BenchmarkAggregateRoot(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			ar.Load(history)
+		}
+
+		// for ar.GetProcessedEventsCount() < b.N {
+		// 	runtime.Gosched()
+		// }
+	})
+}
+
+func BenchmarkParallelAggregateRoot(b *testing.B) {
+	b.Run("Parallel AddBook", func(b *testing.B) {
+		ctx, _ := context.WithTimeout(context.Background(), 10000*time.Millisecond)
+		// defer cancel()
+
+		lib := newLibrary()
+		errCh := make(chan error, 1)
+		ar, closer := pkg.NewAggregateRoot[pkg.IAggregateRoot](ctx, lib, errCh)
+		defer closer()
+
+		b.ResetTimer()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				lib.AddBook("Book")
+			}
+		})
+
+		for ar.GetProcessedEventsCount() < b.N {
+			runtime.Gosched()
 		}
 	})
 }
