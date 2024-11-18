@@ -322,19 +322,48 @@ sequenceDiagram
     participant ErrorChannel
 
     Client->>AggregateRoot: SendDomainEvent(AddBookEvent)
+    AggregateRoot->>AggregateRoot: ApplyDomainEvent
     AggregateRoot->>Entity: Handle(AddBookEvent)
-    Entity-->>AggregateRoot: State Updated
-    AggregateRoot->>AggregateRoot: ApplyDomainEvent
-    AggregateRoot->>AggregateRoot: Increment Version
-    AggregateRoot->>AggregateRoot: Increment ProcessedEvents
-    AggregateRoot->>Client: Acknowledge
+    activate Entity
+
+    rect rgb(244,67,54)
+        alt Event Handling Fails
+            AggregateRoot->>ErrorChannel: Report Error
+        else State Validation Fails
+            AggregateRoot->>ErrorChannel: Report Error
+        end
+    end
+
+    rect rgb(76,175,80)
+        alt Success
+            Entity-->>AggregateRoot: State Updated
+            AggregateRoot->>AggregateRoot: Increment Version
+            AggregateRoot->>AggregateRoot: Increment ProcessedEvents
+            AggregateRoot->>Client: Acknowledge
+        end
+    end
+
     Client->>AggregateRoot: SendDomainEvent(RemoveBookEvent)
-    AggregateRoot->>Entity: Handle(RemoveBookEvent)
-    Entity-->>AggregateRoot: State Updated
     AggregateRoot->>AggregateRoot: ApplyDomainEvent
-    AggregateRoot->>AggregateRoot: Increment Version
-    AggregateRoot->>AggregateRoot: Increment ProcessedEvents
-    AggregateRoot->>Client: Acknowledge
+    AggregateRoot->>Entity: Handle(RemoveBookEvent)
+    activate Entity
+
+    rect rgb(244,67,54)
+        alt Event Handling Fails
+            AggregateRoot->>ErrorChannel: Report Error
+        else State Validation Fails
+            AggregateRoot->>ErrorChannel: Report Error
+        end
+    end
+
+    rect rgb(76,175,80)
+        alt Success
+            Entity-->>AggregateRoot: State Updated
+            AggregateRoot->>AggregateRoot: Increment Version
+            AggregateRoot->>AggregateRoot: Increment ProcessedEvents
+            AggregateRoot->>Client: Acknowledge
+        end
+    end
 ```
 
 ## Dependencies
