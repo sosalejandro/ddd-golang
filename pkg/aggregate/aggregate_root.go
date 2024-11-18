@@ -94,7 +94,6 @@ func (ar *AggregateRoot[T]) ApplyDomainEvent(event IDomainEvent) (err error) {
 		return err
 	}
 
-	// Signal that an event was processed, regardless of validation result
 	atomic.AddInt32(&ar.processedEvents, 1)
 	select {
 	case ar.eventProcessedCh <- struct{}{}:
