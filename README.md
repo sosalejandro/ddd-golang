@@ -32,6 +32,7 @@ go mod tidy
 - [x] Aggregate Root - See the implementation in the [/pkg/aggregate](./pkg/aggregate/README.md) folder
 - [ ] Improvements for standardization and domain errors
 - [ ] Event Manager (Serializer for an Event Store)
+- [ ] Open Telemetry [OTEL](https://opentelemetry.io/) first-class support. 
 
 ## Contributing
 
