@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 
 	"github.com/sosalejandro/ddd-golang/pkg/aggregate"
@@ -9,17 +10,17 @@ import (
 // library is an aggregate root that represents a library.
 type library struct {
 	books map[string]*book
-	ch    chan<- aggregate.IDomainEvent
+	*aggregate.AggregateRoot
 }
 
 // AddBook adds a book to the library.
-func (l *library) AddBook(title string) {
-	l.SendDomainEvent(&addBookEvent{Title: title})
+func (l *library) AddBook(ctx context.Context, title string) error {
+	return l.ApplyDomainEvent(ctx, &addBookEvent{Title: title}, l.Handle)
 }
 
 // RemoveBook removes a book from the library.
-func (l *library) RemoveBook(title string) {
-	l.SendDomainEvent(&removeBookEvent{Title: title})
+func (l *library) RemoveBook(ctx context.Context, title string) error {
+	return l.ApplyDomainEvent(ctx, &removeBookEvent{Title: title}, l.Handle)
 }
 
 // GetBook returns a book from the library.
@@ -27,14 +28,13 @@ func (l *library) GetBook(title string) *book {
 	return l.books[title]
 }
 
-// SetDomainEventsChannel sets the channel to send domain events.
-func (l *library) SetDomainEventsChannel(ch chan<- aggregate.IDomainEvent) {
-	l.ch = ch
-}
-
-// SendDomainEvent sends a domain event.
-func (l *library) SendDomainEvent(event aggregate.IDomainEvent) {
-	l.ch <- event
+func (l *library) Load(ctx context.Context, events ...aggregate.DomainEventInterface) error {
+	for _, event := range events {
+		if err := l.ApplyDomainEvent(ctx, event, l.Handle); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // listenDomainEvents listens for domain events.
@@ -56,7 +56,7 @@ func (l *library) handleRemoveBookEvent(event *removeBookEvent) error {
 }
 
 // Handle handles domain events.
-func (l *library) Handle(event aggregate.IDomainEvent) error {
+func (l *library) Handle(ctx context.Context, event aggregate.DomainEventInterface) error {
 	switch e := event.(type) {
 	case *addBookEvent:
 		return l.handleAddBookEvent(e)
@@ -97,6 +97,7 @@ func (b *book) validate() error {
 // newLibrary creates a new library.
 func newLibrary() *library {
 	return &library{
-		books: make(map[string]*book),
+		books:         make(map[string]*book),
+		AggregateRoot: &aggregate.AggregateRoot{},
 	}
 }

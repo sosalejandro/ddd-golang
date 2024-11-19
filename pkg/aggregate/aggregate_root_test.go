@@ -24,17 +24,17 @@ type removeBookEvent struct {
 // library is an aggregate root that represents a library.
 type library struct {
 	books map[string]*book
-	ch    chan<- aggregate.IDomainEvent
+	*aggregate.AggregateRoot
 }
 
-// AddBook adds a book to the library.
-func (l *library) AddBook(title string) {
-	l.SendDomainEvent(&addBookEvent{Title: title})
+// AddBook adds a book to the library with context.
+func (l *library) AddBook(ctx context.Context, title string) error {
+	return l.ApplyDomainEvent(ctx, &addBookEvent{Title: title}, l.Handle)
 }
 
-// RemoveBook removes a book from the library.
-func (l *library) RemoveBook(title string) {
-	l.SendDomainEvent(&removeBookEvent{Title: title})
+// RemoveBook removes a book from the library with context.
+func (l *library) RemoveBook(ctx context.Context, title string) error {
+	return l.ApplyDomainEvent(ctx, &removeBookEvent{Title: title}, l.Handle)
 }
 
 // GetBook returns a book from the library.
@@ -42,14 +42,14 @@ func (l *library) GetBook(title string) *book {
 	return l.books[title]
 }
 
-// SetDomainEventsChannel sets the channel to send domain events.
-func (l *library) SetDomainEventsChannel(ch chan<- aggregate.IDomainEvent) {
-	l.ch = ch
-}
+// Load loads events with context.
+func (l *library) Load(ctx context.Context, events ...aggregate.DomainEventInterface) error {
+	if err := l.AggregateRoot.Load(ctx, events, l.Handle); err != nil {
+		return err
+	}
 
-// SendDomainEvent sends a domain event.
-func (l *library) SendDomainEvent(event aggregate.IDomainEvent) {
-	l.ch <- event
+	l.ClearChanges()
+	return nil
 }
 
 // listenDomainEvents listens for domain events.
@@ -71,7 +71,7 @@ func (l *library) handleRemoveBookEvent(event *removeBookEvent) error {
 }
 
 // Handle handles domain events.
-func (l *library) Handle(event aggregate.IDomainEvent) error {
+func (l *library) Handle(ctx context.Context, event aggregate.DomainEventInterface) error {
 	switch e := event.(type) {
 	case *addBookEvent:
 		return l.handleAddBookEvent(e)
@@ -112,134 +112,108 @@ func (b *book) validate() error {
 // newLibrary creates a new library.
 func newLibrary() *library {
 	return &library{
-		books: make(map[string]*book),
+		books:         make(map[string]*book),
+		AggregateRoot: aggregate.NewAggregateRoot(),
 	}
 }
 
 func TestAggregateRoot(t *testing.T) {
 	t.Run("should handle valid book operations", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		// Act
-		lib.AddBook("Clean Code")
-		assert.NoError(t, ar.WaitForEvents(ctx, 1))
+		lib.AddBook(context.Background(), "Clean Code")
 
 		// Assert
 		assert.NotNil(t, lib.GetBook("Clean Code"))
-		assert.Equal(t, 0, ar.Version)
-		assert.Len(t, ar.GetChanges(), 1)
+		assert.Equal(t, 0, lib.Version)
+		assert.Len(t, lib.GetChanges(), 1)
 	})
 
 	t.Run("should detect invalid book state", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		lib := newLibrary()
-		errCh := make(chan error, 10)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		// Act & Assert
-		lib.AddBook("")
+		err := lib.AddBook(context.Background(), "")
 
-		// Wait for event processing
-		assert.NoError(t, ar.WaitForEvents(ctx, 0))
-
-		// Verify error was received
-		select {
-		case err := <-errCh:
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "title is required")
-		case <-time.After(time.Second):
-			t.Fatal("expected error for invalid book")
-		}
-
+		assert.Error(t, err)
 		// Verify state wasn't changed
-		assert.Equal(t, -1, ar.Version)
-		assert.Empty(t, ar.GetChanges())
+		assert.Equal(t, -1, lib.Version)
+		assert.Empty(t, lib.GetChanges())
 		assert.Nil(t, lib.GetBook(""))
 	})
 
 	t.Run("should maintain version across operations", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		// Act & Assert
-		lib.AddBook("Book1")
-		assert.NoError(t, ar.WaitForEvents(ctx, 1))
-		assert.Equal(t, 0, ar.Version)
+		lib.AddBook(context.Background(), "Book1")
+		assert.Equal(t, 0, lib.Version)
 
-		lib.AddBook("Book2")
-		assert.NoError(t, ar.WaitForEvents(ctx, 2))
-		assert.Equal(t, 1, ar.Version)
+		lib.AddBook(context.Background(), "Book2")
+		assert.Equal(t, 1, lib.Version)
 
-		lib.RemoveBook("Book1")
-		assert.NoError(t, ar.WaitForEvents(ctx, 3))
-		assert.Equal(t, 2, ar.Version)
+		lib.RemoveBook(context.Background(), "Book1")
+		assert.Equal(t, 2, lib.Version)
+		assert.Nil(t, lib.GetBook("Book1"))
 	})
 
 	t.Run("should load history correctly", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
-		history := []aggregate.IDomainEvent{
+		history := []aggregate.DomainEventInterface{
 			&addBookEvent{Title: "Book1"},
 			&addBookEvent{Title: "Book2"},
 			&removeBookEvent{Title: "Book1"},
 		}
 
 		// Act
-		ar.Load(history)
+		lib.Load(context.Background(), history...)
 
 		// Assert
-		assert.Equal(t, 2, ar.Version)
+		assert.Equal(t, 2, lib.Version)
 		assert.Nil(t, lib.GetBook("Book1"))
 		assert.NotNil(t, lib.GetBook("Book2"))
-		assert.Empty(t, ar.GetChanges())
-		assert.Equal(t, 3, ar.GetProcessedEventsCount())
+		assert.Empty(t, lib.GetChanges())
+	})
+
+	t.Run("should handle error when loading history", func(t *testing.T) {
+		// Arrange
+		lib := newLibrary()
+
+		history := []aggregate.DomainEventInterface{
+			&addBookEvent{Title: "Book1"},
+			&addBookEvent{Title: "Book2"},
+			&removeBookEvent{Title: "Book1"},
+			&removeBookEvent{Title: ""},
+		}
+
+		// Act
+		err := lib.Load(context.Background(), history...)
+
+		// Assert
+		assert.Error(t, err)
 	})
 
 	t.Run("should handle sequential add and remove operations", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		expectedEvents := 500
 
 		// Act
 		for i := 0; i < 250; i++ {
-			lib.AddBook(fmt.Sprintf("Book%d", i))
-			lib.RemoveBook(fmt.Sprintf("Book%d", i))
+			lib.AddBook(context.Background(), fmt.Sprintf("Book%d", i))
+			lib.RemoveBook(context.Background(), fmt.Sprintf("Book%d", i))
 		}
 
 		// Assert
-		assert.NoError(t, ar.WaitForEvents(ctx, expectedEvents))
-		assert.Equal(t, 499, ar.Version)
-		assert.Len(t, ar.GetChanges(), expectedEvents)
+		assert.Equal(t, 499, lib.Version)
+		assert.Len(t, lib.GetChanges(), expectedEvents)
 		for i := 0; i < 250; i++ {
 			assert.Nil(t, lib.GetBook(fmt.Sprintf("Book%d", i)))
 		}
@@ -247,25 +221,18 @@ func TestAggregateRoot(t *testing.T) {
 
 	t.Run("should handle 500 sequential add operations", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		expectedEvents := 500
 
 		// Act
 		for i := 0; i < 500; i++ {
-			lib.AddBook(fmt.Sprintf("Book%d", i))
+			lib.AddBook(context.Background(), fmt.Sprintf("Book%d", i))
 		}
 
 		// Assert
-		assert.NoError(t, ar.WaitForEvents(ctx, expectedEvents))
-		assert.Equal(t, 499, ar.Version)
-		assert.Len(t, ar.GetChanges(), expectedEvents)
+		assert.Equal(t, 499, lib.Version)
+		assert.Len(t, lib.GetChanges(), expectedEvents)
 		for i := 0; i < 500; i++ {
 			assert.NotNil(t, lib.GetBook(fmt.Sprintf("Book%d", i)))
 		}
@@ -273,236 +240,134 @@ func TestAggregateRoot(t *testing.T) {
 
 	t.Run("should handle 500 sequential remove operations", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		expectedEvents := 1000 // 500 adds + 500 removes
 
 		// Add books first
 		for i := 0; i < 500; i++ {
-			lib.AddBook(fmt.Sprintf("Book%d", i))
+			lib.AddBook(context.Background(), fmt.Sprintf("Book%d", i))
 		}
 
 		// Act
 		for i := 0; i < 500; i++ {
-			lib.RemoveBook(fmt.Sprintf("Book%d", i))
+			lib.RemoveBook(context.Background(), fmt.Sprintf("Book%d", i))
 		}
 		// Assert
-		assert.NoError(t, ar.WaitForEvents(ctx, expectedEvents))
-		assert.Equal(t, 999, ar.Version)
-		assert.Len(t, ar.GetChanges(), expectedEvents)
+		assert.Equal(t, 999, lib.Version)
+		assert.Len(t, lib.GetChanges(), expectedEvents)
 		for i := 0; i < 500; i++ {
 			assert.Nil(t, lib.GetBook(fmt.Sprintf("Book%d", i)))
 		}
 
-		// Check error channel
-		select {
-		case err := <-errCh:
-			t.Fatalf("unexpected error: %v", err)
-		default:
-			// No errors - good
-		}
 	})
 
 	t.Run("should clear changes without affecting state", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		// Act
-		lib.AddBook("Test Book")
-		assert.NoError(t, ar.WaitForEvents(ctx, 1))
-		initialVersion := ar.Version
-		ar.ClearChanges()
+		lib.AddBook(context.Background(), "Test Book")
+		initialVersion := lib.Version
+		lib.ClearChanges()
 
 		// Assert
 		assert.NotNil(t, lib.GetBook("Test Book"))
-		assert.Empty(t, ar.GetChanges())
-		assert.Equal(t, initialVersion, ar.Version)
+		assert.Empty(t, lib.GetChanges())
+		assert.Equal(t, initialVersion, lib.Version)
 	})
 
 	t.Run("should handle valid book operations with context", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
 
 		// Act
-		lib.AddBook("Clean Code")
-		assert.NoError(t, ar.WaitForEvents(ctx, 1))
+		lib.AddBook(context.Background(), "Clean Code")
 
 		// Assert
 		assert.Eventually(t, func() bool {
 			return lib.GetBook("Clean Code") != nil
 		}, 50*time.Millisecond, 5*time.Millisecond)
-		assert.Equal(t, 0, ar.Version)
-		assert.Len(t, ar.GetChanges(), 1)
+		assert.Equal(t, 0, lib.Version)
+		assert.Len(t, lib.GetChanges(), 1)
 	})
+}
 
-	t.Run("should close channel on context cancellation", func(t *testing.T) {
+func TestAggregateRoot_WithContextCancellation(t *testing.T) {
+	t.Run("should handle context cancellation during AddBook", func(t *testing.T) {
 		// Arrange
-		ctx, cancel := context.WithCancel(context.Background())
 		lib := newLibrary()
-		errCh := make(chan error, 10)
-		ar, _ := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel the context immediately
 
 		// Act
-		lib.AddBook("Test Book")
-		err := ar.WaitForEvents(ctx, 1)
-		cancel() // Cancel context
+		err := lib.AddBook(ctx, "Clean Code")
 
-		// Assert - try to send after context cancelled
-		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond) // Allow time for cleanup
-
-		// This should panic if channel isn't closed - recover and assert
-		recovered := false
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					recovered = true
-				}
-			}()
-			lib.AddBook("Should Fail")
-		}()
-
-		assert.True(t, recovered, "expected panic when writing to closed channel")
-	})
-
-	t.Run("should timeout if operation takes too long", func(t *testing.T) {
-		// Arrange
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-		defer cancel()
-
-		lib := newLibrary()
-		errCh := make(chan error, 1)
-		aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		// defer closer()
-
-		// Act & Assert
-		time.Sleep(20 * time.Millisecond) // Wait for timeout
-		recovered := false
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					recovered = true
-				}
-			}()
-			lib.AddBook("Should Fail")
-		}()
-
-		assert.True(t, recovered, "expected panic when writing to closed channel after timeout")
-	})
-
-	t.Run("WaitForEvents should timeout when events are not processed", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
-
-		err := ar.WaitForEvents(ctx, 1)
+		// Assert
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "operation canceled")
+		assert.Equal(t, -1, lib.Version)
+		assert.Empty(t, lib.GetChanges())
+		assert.Nil(t, lib.GetBook("Clean Code"))
 	})
 
-	t.Run("WaitForEvents should return immediately when target count is reached", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+	t.Run("should handle context cancellation during Load", func(t *testing.T) {
+		// Arrange
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, closer := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		defer closer()
+		ctx, cancel := context.WithCancel(context.Background())
+		history := []aggregate.DomainEventInterface{
+			&addBookEvent{Title: "Book1"},
+			&addBookEvent{Title: "Book2"},
+		}
+		cancel() // Cancel the context before loading
 
-		lib.AddBook("Test Book")
-		start := time.Now()
-		err := ar.WaitForEvents(ctx, 1)
-		duration := time.Since(start)
+		// Act
+		err := lib.Load(ctx, history...)
 
-		assert.NoError(t, err)
-		assert.Less(t, duration, 100*time.Millisecond)
+		// Assert
+		assert.Error(t, err)
+		assert.Equal(t, -1, lib.Version)
+		assert.Empty(t, lib.GetChanges())
+		assert.Nil(t, lib.GetBook("Book1"))
+		assert.Nil(t, lib.GetBook("Book2"))
 	})
 }
 
 func BenchmarkAggregateRoot(b *testing.B) {
 	b.Run("Sequential AddBook", func(b *testing.B) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10000*time.Millisecond)
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, _ := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		// defer closer()
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			lib.AddBook("Book")
-		}
-
-		if err := ar.WaitForEvents(ctx, b.N); err != nil {
-			b.Fatal(err)
+			lib.AddBook(context.Background(), "Book")
 		}
 	})
 
 	b.Run("Load History", func(b *testing.B) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10000*time.Millisecond)
-		defer cancel()
-
 		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, _ := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		// defer closer()
 
-		history := []aggregate.IDomainEvent{
+		history := []aggregate.DomainEventInterface{
 			&addBookEvent{Title: "Book1"},
 			&removeBookEvent{Title: "Book1"},
 		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			ar.Load(history)
-		}
-
-		if err := ar.WaitForEvents(ctx, b.N); err != nil {
-			b.Fatal(err)
+			lib.Load(context.Background(), history...)
 		}
 	})
 }
 
-func BenchmarkParallelAggregateRoot(b *testing.B) {
-	b.Run("Parallel AddBook", func(b *testing.B) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10000*time.Millisecond)
-		defer cancel()
+// func BenchmarkParallelAggregateRoot(b *testing.B) {
+// 	b.Run("Parallel AddBook", func(b *testing.B) {
 
-		lib := newLibrary()
-		errCh := make(chan error, 1)
-		ar, _ := aggregate.NewAggregateRoot[aggregate.AggregateRootInterface](ctx, lib, errCh)
-		// defer closer()
+// 		lib := newLibrary()
 
-		b.ResetTimer()
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				lib.AddBook("Book")
-			}
-		})
-
-		if err := ar.WaitForEvents(ctx, b.N); err != nil {
-			b.Fatal(err)
-		}
-	})
-}
+// 		b.ResetTimer()
+// 		b.RunParallel(func(pb *testing.PB) {
+// 			for pb.Next() {
+// 				lib.AddBook("Book")
+// 			}
+// 		})
+// 	})
+// }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/sosalejandro/ddd-golang/pkg/aggregate"
 )
@@ -14,66 +13,29 @@ func main() {
 }
 
 func exampleBaseCaseUsage() {
+	ctx := context.Background()
 	// Create a library.
 	lib := newLibrary()
 
-	// Create an error channel with buffer.
-	errCh := make(chan error, 10)
-
-	// Create a context with cancellation.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Create an aggregate root.
-	ar, _ := aggregate.NewAggregateRoot(ctx, lib, errCh)
-	// defer closeChannel()
-
-	// Start a goroutine to handle errors.
-	go func() {
-		for err := range errCh {
-			if err != nil {
-				log.Printf("Error: %v\n", err)
-			}
-		}
-	}()
-
 	// Add and remove books.
-	lib.AddBook("The Hobbit")
-	lib.RemoveBook("The Hobbit")
-
-	// Wait until processed events count is 2 or context is canceled.
-	if err := ar.WaitForEvents(ctx, 2); err != nil {
-		log.Println(err)
-		return
+	if err := lib.AddBook(ctx, "The Hobbit"); err != nil {
+		fmt.Println("Error adding book:", err)
+	}
+	if err := lib.RemoveBook(ctx, "The Hobbit"); err != nil {
+		fmt.Println("Error removing book:", err)
 	}
 
 	fmt.Println("Example base case usage completed.")
 }
 
 func exampleLoadUsage() {
+	// Create a context.
+	ctx := context.Background()
+
 	// Create a library.
 	lib := newLibrary()
 
-	// Create an error channel with buffer.
-	errCh := make(chan error, 10)
-
-	// Create a context with cancellation.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Create an aggregate root.
-	ar, _ := aggregate.NewAggregateRoot(ctx, lib, errCh)
-
-	// Start a goroutine to handle errors.
-	go func() {
-		for err := range errCh {
-			if err != nil {
-				log.Printf("Error: %v\n", err)
-			}
-		}
-	}()
-
-	history := []aggregate.IDomainEvent{
+	history := []aggregate.DomainEventInterface{
 		&addBookEvent{Title: "The Hobbit"},
 		&removeBookEvent{Title: "The Hobbit"},
 		&addBookEvent{Title: "Harry Potter and the Philosopher's Stone"},
@@ -85,24 +47,18 @@ func exampleLoadUsage() {
 	}
 
 	// Load the history.
-	ar.Load(history)
-
-	if err := ar.WaitForEvents(ctx, len(history)); err != nil {
-		log.Println(err)
-		return
+	if err := lib.Load(ctx, history); err != nil {
+		fmt.Println("Error loading history:", err)
 	}
 
-	fmt.Printf("Processed events count: %d\n", ar.GetProcessedEventsCount())
 	fmt.Println("Example load usage completed.")
 	for title := range lib.books {
 		fmt.Println("-", title)
 	}
 
 	// Example of adding another book
-	lib.AddBook("1984")
-	if err := ar.WaitForEvents(ctx, len(history)+1); err != nil {
-		log.Println(err)
-		return
+	if err := lib.AddBook(ctx, "1984"); err != nil {
+		fmt.Println("Error adding book:", err)
 	}
 	fmt.Println("Additional event processed.")
 }
