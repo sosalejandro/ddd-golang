@@ -28,12 +28,13 @@ func (l *library) GetBook(title string) *book {
 	return l.books[title]
 }
 
+// Load loads events with context.
 func (l *library) Load(ctx context.Context, events ...aggregate.DomainEventInterface) error {
-	for _, event := range events {
-		if err := l.ApplyDomainEvent(ctx, event, l.Handle); err != nil {
-			return err
-		}
+	if err := l.AggregateRoot.Load(ctx, events, l.Handle); err != nil {
+		return err
 	}
+
+	l.ClearChanges()
 	return nil
 }
 
