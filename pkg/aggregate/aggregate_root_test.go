@@ -43,7 +43,7 @@ func (l *library) GetBook(title string) *book {
 }
 
 // Load loads events with context.
-func (l *library) Load(ctx context.Context, events ...aggregate.DomainEventInterface) error {
+func (l *library) Load(ctx context.Context, events ...aggregate.RecordedEvent) error {
 	if err := l.AggregateRoot.Load(ctx, events, l.Handle); err != nil {
 		return err
 	}
@@ -128,7 +128,9 @@ func TestAggregateRoot(t *testing.T) {
 		// Assert
 		assert.NotNil(t, lib.GetBook("Clean Code"))
 		assert.Equal(t, 0, lib.Version)
-		assert.Len(t, lib.GetChanges(), 1)
+		changes := lib.GetChanges()
+		assert.Len(t, changes, 1)
+		assert.Equal(t, 0, changes[0].EventID) // Verify EventID matches version
 	})
 
 	t.Run("should detect invalid book state", func(t *testing.T) {
@@ -171,8 +173,17 @@ func TestAggregateRoot(t *testing.T) {
 			&removeBookEvent{Title: "Book1"},
 		}
 
+		eventRecords := make([]aggregate.RecordedEvent, len(history))
+		for i, event := range history {
+			eventRecords = append(eventRecords, aggregate.RecordedEvent{
+				Event:     event,
+				EventID:   i,
+				Timestamp: time.Now().Unix(),
+			})
+		}
+
 		// Act
-		lib.Load(context.Background(), history...)
+		lib.Load(context.Background(), eventRecords...)
 
 		// Assert
 		assert.Equal(t, 2, lib.Version)
@@ -192,8 +203,17 @@ func TestAggregateRoot(t *testing.T) {
 			&removeBookEvent{Title: ""},
 		}
 
+		eventRecords := make([]aggregate.RecordedEvent, len(history))
+		for i, event := range history {
+			eventRecords = append(eventRecords, aggregate.RecordedEvent{
+				Event:     event,
+				EventID:   i,
+				Timestamp: time.Now().Unix(),
+			})
+		}
+
 		// Act
-		err := lib.Load(context.Background(), history...)
+		err := lib.Load(context.Background(), eventRecords...)
 
 		// Assert
 		assert.Error(t, err)
@@ -321,8 +341,17 @@ func TestAggregateRoot_WithContextCancellation(t *testing.T) {
 		}
 		cancel() // Cancel the context before loading
 
+		eventRecords := make([]aggregate.RecordedEvent, len(history))
+		for i, event := range history {
+			eventRecords = append(eventRecords, aggregate.RecordedEvent{
+				Event:     event,
+				EventID:   i,
+				Timestamp: time.Now().Unix(),
+			})
+		}
+
 		// Act
-		err := lib.Load(ctx, history...)
+		err := lib.Load(ctx, eventRecords...)
 
 		// Assert
 		assert.Error(t, err)
@@ -351,9 +380,18 @@ func BenchmarkAggregateRoot(b *testing.B) {
 			&removeBookEvent{Title: "Book1"},
 		}
 
+		eventRecords := make([]aggregate.RecordedEvent, len(history))
+		for i, event := range history {
+			eventRecords = append(eventRecords, aggregate.RecordedEvent{
+				Event:     event,
+				EventID:   i,
+				Timestamp: time.Now().Unix(),
+			})
+		}
+
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			lib.Load(context.Background(), history...)
+			lib.Load(context.Background(), eventRecords...)
 		}
 	})
 }
