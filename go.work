@@ -1,0 +1,12 @@
+go 1.23.3
+
+use (
+	./examples/library
+	./pkg/aggregate
+	./pkg/driver/cassandra
+	./pkg/driver/memory
+	./pkg/event-manager
+	./pkg/mocks
+	./pkg/repository
+	./pkg/repository/factory
+)

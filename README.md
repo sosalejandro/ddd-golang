@@ -9,6 +9,7 @@ This project is an implementation of Domain-Driven Design (DDD) principles using
   - [Introduction](#introduction)
   - [Getting Started](#getting-started)
   - [TODO](#todo)
+    - [Internal TODO](#internal-todo)
   - [Contributing](#contributing)
   - [License](#license)
 
@@ -31,8 +32,25 @@ go mod tidy
 
 - [x] Aggregate Root - See the implementation in the [/pkg/aggregate](./pkg/aggregate/README.md) folder
 - [ ] Improvements for standardization and domain errors
-- [ ] Event Manager (Serializer for an Event Store)
+- [x] Event Manager (Serializer for an Event Store)
 - [ ] Open Telemetry [OTEL](https://opentelemetry.io/) first-class support. 
+
+
+### Internal TODO
+
+- [x] Implement cassandra methods for Load and SaveSnapshot
+- [x] Implement InMemory Repository
+- [x] Create PoC for InMemory repository implementation
+- [ ] ~~Create PoC for Cassandra's repository implementation~~
+- [ ] Update `AggregateRoot` documentation for its implementation
+- [ ] Generate ADR for `AggregateRoot` refactor
+- [x] Implement Moq library
+- [x] Implement generic repository tests (mock AggregateRepositoryInterface)
+- [ ] ~~Implement cassandra mock tests~~
+- [x] Implement mocked tests for factory methods under the `factory` folder
+- [x] Refactor Golang modules
+- [ ] Generate Repository documentation
+- [ ] Generate EventManager documentation
 
 ## Contributing
 

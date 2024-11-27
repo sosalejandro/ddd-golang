@@ -1,23 +1,28 @@
 # Aggregate Root Example in Go
 
-This repository demonstrates how to implement and use the `AggregateRoot` pattern in Go using Domain-Driven Design (DDD) principles. The example showcases a simple library system where you can add and remove books.
+This repository demonstrates the implementation of the `AggregateRoot` pattern in Go, adhering to Domain-Driven Design (DDD) principles. The example encapsulates a simple library system where books can be added and removed through domain events.
 
 ## Overview
 
-The `AggregateRoot` implementation manages domain events and maintains the state of an entity (in this case, a `Library`). It ensures that all business rules are enforced and that the state remains consistent.
+The `AggregateRoot` is central to managing domain events and maintaining the state of the aggregate (in this case, the `Library`). It ensures that all business rules are enforced and the state remains consistent throughout operations.
 
 ## Getting Started
+
+### Prerequisites
+
+- [Go](https://golang.org/) 1.18 or higher installed on your machine.
+- [Git](https://git-scm.com/) for cloning the repository.
+
+### Installation
 
 1. **Clone the Repository**
 
    ```bash
    git clone https://github.com/sosalejandro/ddd-golang.git
-   cd ddd-golang
+   cd ddd-golang/pkg/aggregate
    ```
 
 2. **Initialize Go Modules**
-
-   Ensure Go is installed on your machine. Initialize the modules:
 
    ```bash
    go mod tidy
@@ -25,7 +30,7 @@ The `AggregateRoot` implementation manages domain events and maintains the state
 
 3. **Run the Example**
 
-   Navigate to the example directory and run the application:
+   Navigate to the example directory and execute the application:
 
    ```bash
    cd examples/library
@@ -36,342 +41,141 @@ The `AggregateRoot` implementation manages domain events and maintains the state
 
 ### Instantiating AggregateRoot
 
-To use the `AggregateRoot`, you need to:
+To utilize the `AggregateRoot`, follow these steps:
 
 1. **Define Your Aggregate Root Entity**
 
-   In this example, `Library` is the aggregate root managing books.
+   The `Library` struct serves as the aggregate root, managing a collection of books.
 
 2. **Create Domain Events**
 
-   Define events such as `addBookEvent` and `removeBookEvent` that represent significant state changes.
+   Define domain events such as `addBookEvent` and `removeBookEvent` to represent significant state changes.
 
-3. **Instantiate AggregateRoot**
+3. **Initialize AggregateRoot**
 
-    The *AggregateRoot* takes an *Entity* which implements *AggregateRootInterface*.
+   Instantiate the `AggregateRoot` and associate it with the `Library` entity.
 
-    ```go
-    // AggregateRootInterface is an interface that represents an aggregate root entity.
-    type AggregateRootInterface interface {
-        // Handle handles domain events.
-        Handle(event IDomainEvent) error
-        // ValidateState validates the state of the aggregate root.
-        ValidateState() error
-        // SetDomainEventsChannel sets the channel to send domain events.
-        SetDomainEventsChannel(ch chan<- IDomainEvent)
-        // SendDomainEvent sends a domain event.
-        SendDomainEvent(event IDomainEvent)
-    }
-    ```
-    
-    _When the cancellation doesn't come from the context, the deferred call to the `close` function from the AggregateRoot should be made to manage the disposal of the inner channels._
-    
-    _The `errCh` is responsible for being closed within the `closeChannel` function since its sender should be in charge of closing the channel._
-    
-    ### With Cancel
-    ```go
-    lib := library.NewLibrary()
-    errCh := make(chan error, 10)
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
+   ```go
+   lib := newLibrary()
+   ctx := context.Background()
 
-    ar, _ := pkg.NewAggregateRoot(ctx, lib, errCh)
-    ```
+   if err := lib.AddBook(ctx, "1984"); err != nil {
+       fmt.Println("Error adding book:", err)
+   }
+   ```
 
-    ### Without Cancel
+### Performing Operations
 
-    ```go
-    lib := library.NewLibrary()
-    errCh := make(chan error, 10)
-    ctx := context.Background()
-
-    ar, closeChannel := pkg.NewAggregateRoot(ctx, lib, errCh)
-    defer closeChannel()
-    ```
-
-### Interacting with AggregateRoot
-
-1. Use the entity's methods to handle domain events:
-
-    ### Library Operations
-
-    ```go
-    // Start a goroutine to handle errors.
-    go func() {
-        for err := range errCh {
-            if err != nil {
-                log.Printf("Error: %v\n", err)
-            }
-        }
-    }()
-
-    // Add and remove books.
-    lib.AddBook("The Hobbit")
-    lib.RemoveBook("The Hobbit")
-
-    // Wait until processed events count is 2 or context is canceled.
-    if err := ar.WaitForEvents(ctx, 2); err != nil {
-        log.Println(err)
-        return
-    }
-    ```
-
-2. Use the Aggregate to handle the entity's state recreation
-
-   ### Aggregate Operations
-    ```go
-    // Start a goroutine to handle errors.
-    go func() {
-        for err := range errCh {
-            if err != nil {
-                log.Printf("Error: %v\n", err)
-            }
-        }
-    }()
-
-    history := []aggregate.IDomainEvent{
-        &addBookEvent{Title: "The Hobbit"},
-        &removeBookEvent{Title: "The Hobbit"},
-        &addBookEvent{Title: "Harry Potter and the Philosopher's Stone"},
-        &removeBookEvent{Title: "Harry Potter and the Philosopher's Stone"},
-        &addBookEvent{Title: "Harry Potter and the Chamber of Secrets"},
-        &removeBookEvent{Title: "Harry Potter and the Chamber of Secrets"},
-        &addBookEvent{Title: "Harry Potter and the Prisoner of Azkaban"},
-        &removeBookEvent{Title: "Harry Potter and the Prisoner of Azkaban"},
-    }
-
-    // Load the history.
-    ar.Load(history)
-
-    if err := ar.WaitForEvents(ctx, len(history)); err != nil {
-        log.Println(err)
-        return
-    }
-    ```
-
-### Aggregate Root and Entity Internals
-
-The implementation heavily relies on the Entity (Aggregate Root) implementing the `AggregateRootInterface` as demonstrated in the following code:
+#### Adding a Book
 
 ```go
-// library is an aggregate root that represents a library.
+if err := lib.AddBook(ctx, "Brave New World"); err != nil {
+    fmt.Println("Error adding book:", err)
+}
+```
+
+#### Removing a Book
+
+```go
+if err := lib.RemoveBook(ctx, "1984"); err != nil {
+    fmt.Println("Error removing book:", err)
+}
+```
+
+### Loading Event History
+
+Reconstruct the state of the `Library` by loading a history of domain events.
+
+```go
+history := []aggregate.RecordedEvent{
+    {EventID: 0, Timestamp: time.Now().Unix(), Event: &addBookEvent{Title: "1984"}},
+    {EventID: 1, Timestamp: time.Now().Unix(), Event: &removeBookEvent{Title: "1984"}},
+}
+
+if err := lib.Load(ctx, history...); err != nil {
+    fmt.Println("Error loading history:", err)
+}
+```
+
+### Handling Errors and Validation
+
+The `AggregateRoot` enforces business rules. Attempting to add a book with an empty title will result in an error.
+
+```go
+err := lib.AddBook(ctx, "")
+if err != nil {
+    fmt.Println("Error:", err) // Outputs: title is required
+}
+```
+
+## Aggregate Root and Entity Internals
+
+The `AggregateRoot` is responsible for handling domain events and maintaining the state of the `Library`. It uses channels for asynchronous event processing.
+
+```go
+package aggregate
+
+type AggregateRoot struct {
+    changes []RecordedEvent
+    Version int
+}
+
+// ApplyDomainEvent applies a domain event and updates the aggregate.
+func (ar *AggregateRoot) ApplyDomainEvent(ctx context.Context, event DomainEventInterface, handle func(ctx context.Context, e DomainEventInterface) error) error {
+    // Event handling logic
+}
+```
+
+The `Library` entity implements methods to add and remove books, handling domain events through the `AggregateRoot`.
+
+```go
+package main
+
 type library struct {
-	books map[string]*book
-	ch    chan<- aggregate.IDomainEvent
+    Books map[string]*book
+    *aggregate.AggregateRoot
 }
 
-// SetDomainEventsChannel sets the channel to send domain events.
-func (l *library) SetDomainEventsChannel(ch chan<- aggregate.IDomainEvent) {
-	l.ch = ch
+func (l *library) AddBook(ctx context.Context, title string) error {
+    return l.ApplyDomainEvent(ctx, &addBookEvent{Title: title}, l.Handle)
 }
 
-// SendDomainEvent sends a domain event.
-func (l *library) SendDomainEvent(event aggregate.IDomainEvent) {
-	l.ch <- event
-}
-
-// Handle handles domain events.
-func (l *library) Handle(event aggregate.IDomainEvent) error {
-	switch e := event.(type) {
-	case *addBookEvent:
-		return l.handleAddBookEvent(e)
-	case *removeBookEvent:
-		return l.handleRemoveBookEvent(e)
-	}
-	return nil
-}
-
-// ValidateState validates the state of the library.
-func (l *library) ValidateState() error {
-	var errs error
-	for _, b := range l.books {
-		if err := b.validate(); err != nil {
-			if errs == nil {
-				errs = err
-				continue
-			}
-			errs = errors.Join(errs, err)
-		}
-	}
-	return errs
+func (l *library) Handle(ctx context.Context, event aggregate.DomainEventInterface) error {
+    switch e := event.(type) {
+    case *addBookEvent:
+        return l.handleAddBookEvent(e)
+    case *removeBookEvent:
+        return l.handleRemoveBookEvent(e)
+    }
+    return nil
 }
 ```
 
-The entity expected to implement the *`AggregateRoot`* has a direct implementation of a channel as a field, but it doesn't manage its state. It is expected that the sender closes the channel but for this case, the *`AggregateRoot`* is on charge of the state as the entity should be considered on other languages as the *`AggregateRoot`*, this implementation is just a _'hack'_ to go around the _*Golang*_ capabilities to compose code and implement this pattern. At the moment of writing this code we lack of abstract classes on Golang and embedding isn't an idiomatic composition of a class so channels are a by-pass to communicate between these two classes which have direct dependencies, they should be look as one entity on the big picture but on the practice they are 2 different objects, but closely related. 
+### Internal Communication
 
-#### How objects are sent to the Aggregate?
-
-We make usage of the *`SendDomainEvent(IDomainEvent)`* method to communicate to the *`AggregateRoot`* through the _`domainEventCh`_ the operations which mutate the state of the *`AggregateRoot`* Entity 
-
-```go
-// AddBook adds a book to the library.
-func (l *library) AddBook(title string) {
-	l.SendDomainEvent(&addBookEvent{Title: title})
-}
-
-// RemoveBook removes a book from the library.
-func (l *library) RemoveBook(title string) {
-	l.SendDomainEvent(&removeBookEvent{Title: title})
-}
-```
-
-These Events are sent and proccessed by the `AggregateRoot` through the `listenDomainEvents` method and then it calls per every `DomainEvent` received the `ApplyDomainEvent` method.
-
-```go
-// listenDomainEvents listens for domain events.
-// It listens for domain events and applies them.
-// It closes the domain events channel when the context is done.
-// It sends an error to the error channel if there is an error.
-// listenDomainEvents listens for incoming domain events and processes them.
-func (ar *AggregateRoot[T]) listenDomainEvents(ctx context.Context) {
-	for {
-		select {
-		case event, ok := <-ar.domainEventCh:
-			if !ok {
-				ar.closeChannel()
-				return
-			}
-			if err := ar.ApplyDomainEvent(event); err != nil {
-				ar.errCh <- err
-			}
-		case <-ctx.Done():
-			ar.closeChannel()
-			return
-		}
-	}
-}
-
-// ApplyDomainEvent applies a domain event.
-// It validates the state of the entity.
-// It increments the version.
-// It increments the processed events.
-// It returns an error if the state is invalid.
-func (ar *AggregateRoot[T]) ApplyDomainEvent(event IDomainEvent) (err error) {
-	if err = ar.entity.Handle(event); err != nil {
-		return err
-	}
-
-	if err = ar.entity.ValidateState(); err != nil {
-		return err
-	}
-
-	atomic.AddInt32(&ar.processedEvents, 1)
-	select {
-	case ar.eventProcessedCh <- struct{}{}:
-	default:
-	}
-
-	ar.changes = append(ar.changes, event)
-	ar.Version++
-	return nil
-}
-```
-
-As these methods are expected to flow through eventually consistency and channels are used for communication between the two structs, a `WaitForEvents` method was implemented on the `AggregateRoot` to use as a mechanism of promise handling. It expects a `targetCount` parameter which should reflect how many operations are expected to be performed. Once these operations match the condition of the `for` loop which is used on this example as a `while` on other languages, it proceeds to exit and return `nil`.
-
-```go
-// WaitForEvents waits until the target count of events is processed or the context is canceled.
-func (ar *AggregateRoot[T]) WaitForEvents(ctx context.Context, targetCount int) error {
-	for ar.GetProcessedEventsCount() < targetCount {
-		select {
-		case <-ar.eventProcessedCh:
-			// Continue waiting
-		case <-ctx.Done():
-			return fmt.Errorf("operation canceled while waiting for events")
-		}
-	}
-	return nil
-}
-```
-
-## Internal Communication
-
-The `AggregateRoot` uses channels to handle asynchronous processing of domain events. When an event is sent to the `domainEventCh` a goroutine listens and applies the event, updating the state accordingly.
-
-### Channel Flow
-
-1. **Event Emission**
-
-   Events are sent to the `domainEventCh` via the `SendDomainEvent` method.
-
-2. **Event Processing**
-
-   A goroutine listens on `domainEventCh` and applies each event using `ApplyDomainEvent`.
-
-3. **Error Handling**
-
-   If `ApplyDomainEvent` encounters an error, it's sent to the `errCh`.
-
-1. **State Update**
-
-   After applying an event, the `AggregateRoot` updates its version and increments the processed events count.
-
-## Handling Cancellation
-
-Both `listenDomainEvents` and `WaitForEvents` functions monitor the context's cancellation via `ctx.Done()`. When the context is canceled, both functions initiate their shutdown processes by closing the channels and exiting gracefully. This ensures that all operations are properly canceled, preventing resource leaks or deadlocks.
-
-### Example
-
-## Sequence Diagram
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant AggregateRoot
-    participant Entity
-    participant ErrorChannel
-
-    Client->>AggregateRoot: SendDomainEvent(AddBookEvent)
-    AggregateRoot->>AggregateRoot: ApplyDomainEvent
-    AggregateRoot->>Entity: Handle(AddBookEvent)
-    activate Entity
-
-    rect rgb(244,67,54)
-        alt Event Handling Fails
-            AggregateRoot->>ErrorChannel: Report Error
-        else State Validation Fails
-            AggregateRoot->>ErrorChannel: Report Error
-        end
-    end
-
-    rect rgb(76,175,80)
-        alt Success
-            Entity-->>AggregateRoot: State Updated
-            AggregateRoot->>AggregateRoot: Increment Version
-            AggregateRoot->>AggregateRoot: Increment ProcessedEvents
-            AggregateRoot->>Client: Acknowledge
-        end
-    end
-
-    Client->>AggregateRoot: SendDomainEvent(RemoveBookEvent)
-    AggregateRoot->>AggregateRoot: ApplyDomainEvent
-    AggregateRoot->>Entity: Handle(RemoveBookEvent)
-    activate Entity
-
-    rect rgb(244,67,54)
-        alt Event Handling Fails
-            AggregateRoot->>ErrorChannel: Report Error
-        else State Validation Fails
-            AggregateRoot->>ErrorChannel: Report Error
-        end
-    end
-
-    rect rgb(76,175,80)
-        alt Success
-            Entity-->>AggregateRoot: State Updated
-            AggregateRoot->>AggregateRoot: Increment Version
-            AggregateRoot->>AggregateRoot: Increment ProcessedEvents
-            AggregateRoot->>Client: Acknowledge
-        end
-    end
-```
+The `AggregateRoot` uses channels to process domain events asynchronously, ensuring that state mutations adhere to business rules and maintaining eventual consistency.
 
 ## Dependencies
 
 - [Go](https://golang.org/) 1.18+
 - [Testify](https://github.com/stretchr/testify) for assertions in tests.
 
+## Testing
 
-# Conclusion
+Unit tests are provided to ensure the correctness of the aggregate root operations.
 
-This example demonstrates how to implement and use the `AggregateRoot` pattern in Go, facilitating clean architecture and separation of concerns. By leveraging Go's concurrency features and interfaces, you can build robust and maintainable domain-driven applications.
+```bash
+go test ./pkg/aggregate
+```
+
+## Benchmarks
+
+Benchmark tests are included to evaluate the performance of the aggregate root.
+
+```bash
+go test -bench=.
+```
+
+## Conclusion
+
+This example showcases the implementation of the `AggregateRoot` pattern in Go, facilitating clean architecture and separation of concerns. By leveraging Go's interfaces and concurrency features, you can build robust and maintainable domain-driven applications.
