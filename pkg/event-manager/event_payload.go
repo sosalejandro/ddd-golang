@@ -6,6 +6,7 @@ type EventPayload struct {
 	AggregateID uuid.UUID
 	Timestamp   int64
 	EventType   string
-	EventID     int // Use aggregate version as EventID
+	EventID     uuid.UUID // Change to UUID
 	Data        []byte
+	Version     int
 }

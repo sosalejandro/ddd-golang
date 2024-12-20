@@ -56,7 +56,8 @@ func exampleLoadUsage() {
 	for i, event := range history {
 		eventRecords = append(eventRecords, aggregate.RecordedEvent{
 			Event:     event,
-			EventID:   i,
+			Version:   i,
+			EventID:   uuid.New(),
 			Timestamp: time.Now().Unix(),
 		})
 	}

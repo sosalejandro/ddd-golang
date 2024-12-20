@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sosalejandro/ddd-golang/pkg/aggregate"
 	"github.com/stretchr/testify/assert"
 )
@@ -130,7 +131,7 @@ func TestAggregateRoot(t *testing.T) {
 		assert.Equal(t, 0, lib.Version)
 		changes := lib.GetChanges()
 		assert.Len(t, changes, 1)
-		assert.Equal(t, 0, changes[0].EventID) // Verify EventID matches version
+		assert.Equal(t, 0, changes[0].Version) // Verify EventID matches version
 	})
 
 	t.Run("should detect invalid book state", func(t *testing.T) {
@@ -173,11 +174,12 @@ func TestAggregateRoot(t *testing.T) {
 			&removeBookEvent{Title: "Book1"},
 		}
 
-		eventRecords := make([]aggregate.RecordedEvent, len(history))
+		eventRecords := make([]aggregate.RecordedEvent, 0, len(history))
 		for i, event := range history {
 			eventRecords = append(eventRecords, aggregate.RecordedEvent{
 				Event:     event,
-				EventID:   i,
+				Version:   i,
+				EventID:   uuid.New(),
 				Timestamp: time.Now().Unix(),
 			})
 		}
@@ -207,7 +209,8 @@ func TestAggregateRoot(t *testing.T) {
 		for i, event := range history {
 			eventRecords = append(eventRecords, aggregate.RecordedEvent{
 				Event:     event,
-				EventID:   i,
+				Version:   i,
+				EventID:   uuid.New(),
 				Timestamp: time.Now().Unix(),
 			})
 		}
@@ -345,7 +348,8 @@ func TestAggregateRoot_WithContextCancellation(t *testing.T) {
 		for i, event := range history {
 			eventRecords = append(eventRecords, aggregate.RecordedEvent{
 				Event:     event,
-				EventID:   i,
+				Version:   i,
+				EventID:   uuid.New(),
 				Timestamp: time.Now().Unix(),
 			})
 		}
@@ -384,7 +388,8 @@ func BenchmarkAggregateRoot(b *testing.B) {
 		for i, event := range history {
 			eventRecords = append(eventRecords, aggregate.RecordedEvent{
 				Event:     event,
-				EventID:   i,
+				Version:   i,
+				EventID:   uuid.New(),
 				Timestamp: time.Now().Unix(),
 			})
 		}

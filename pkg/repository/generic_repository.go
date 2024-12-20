@@ -48,6 +48,7 @@ func (r *GenericRepository[T]) SaveEvents(ctx context.Context, aggregateRoot T) 
 			EventType:   reflect.TypeOf(change.Event).Elem().Name(),
 			EventID:     change.EventID,
 			Data:        data,
+			Version:     change.Version,
 		})
 	}
 
@@ -67,6 +68,7 @@ func IterateIntoRecordedEvents(events []event_manager.EventPayload, eventManager
 				EventID:   event.EventID,
 				Timestamp: event.Timestamp,
 				Event:     eventInterface.(aggregate.DomainEventInterface),
+				Version:   event.Version,
 			}) {
 				return
 			}
@@ -122,15 +124,20 @@ func (r *GenericRepository[T]) SaveSnapshot(ctx context.Context, aggregateRoot T
 		return err
 	}
 
-	getLatestVersion := func() int {
-		return aggregateRoot.GetChanges()[len(aggregateRoot.GetChanges())-1].EventID
+	getLatestEvent := func() (int, uuid.UUID) {
+		latestEvent := aggregateRoot.GetChanges()[len(aggregateRoot.GetChanges())-1]
+
+		return latestEvent.Version, latestEvent.EventID
 	}
+
+	latestVersion, latestEventID := getLatestEvent()
 
 	snapshot := &Snapshot{
 		AggregateID: aggregateRoot.Id(),
 		Data:        data,
-		Version:     getLatestVersion(),
+		Version:     latestVersion,
 		Timestamp:   time.Now().Unix(),
+		EventID:     latestEventID,
 	}
 
 	return r.repo.SaveSnapshot(ctx, snapshot)
