@@ -15,9 +15,11 @@ func (f *CassandraRepositoryFactory) CreateRepository() repository.AggregateRepo
 	cassandra, err := NewAggregateFuncsCassandra(
 		f.config.ClusterHosts,
 		f.config.Keyspace,
-		f.config.AggregateTable,
 		f.config.EventsTable,
 		f.config.SnapshotsTable,
+		f.config.LatestEventTable,
+		f.config.EventCountTable,
+		f.config.EventVersionTable,
 	)
 	if err != nil {
 		panic(err) // Handle this better in production

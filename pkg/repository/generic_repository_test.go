@@ -54,7 +54,8 @@ func (s *GenericRepositorySuite) TestSaveEvents() {
 	// Setup mock expectations for GetChanges
 	expectedChanges := []aggregate.RecordedEvent{
 		{
-			EventID:   1,
+			Version:   1,
+			EventID:   uuid.New(),
 			Timestamp: time.Now().Unix(),
 			Event:     &sampleDomainEvent{},
 		},
@@ -96,6 +97,7 @@ func expectedChangesToSave(changes []aggregate.RecordedEvent, aggregateId uuid.U
 			EventType:   reflect.TypeOf(change.Event).Elem().Name(),
 			EventID:     change.EventID,
 			Data:        data,
+			Version:     change.Version,
 		})
 	}
 	return payloads
@@ -109,7 +111,7 @@ func (s *GenericRepositorySuite) TestRehydrate() {
 			AggregateID: aggregateID,
 			Timestamp:   time.Now().Unix(),
 			EventType:   "sampleDomainEvent",
-			EventID:     1,
+			EventID:     uuid.New(),
 			Data:        data,
 		},
 	}
@@ -145,6 +147,7 @@ func (s *GenericRepositorySuite) TestLoad() {
 		Data:        []byte("{}"),
 		Version:     1,
 		Timestamp:   time.Now().Unix(),
+		EventID:     uuid.New(),
 	}
 
 	// Setup mock expectations for Id with specific arguments
@@ -180,10 +183,13 @@ func (s *GenericRepositorySuite) TestSaveSnapshot() {
 		Return(serializedData, nil).
 		Times(1)
 
+	expectedEventID := uuid.New()
+
 	// Setup mock expectations for GetChanges with specific arguments (called twice)
 	expectedChanges := []aggregate.RecordedEvent{
 		{
-			EventID:   1,
+			Version:   1,
+			EventID:   expectedEventID,
 			Timestamp: time.Now().Unix(),
 			Event:     &sampleDomainEvent{},
 		},
@@ -204,8 +210,9 @@ func (s *GenericRepositorySuite) TestSaveSnapshot() {
 	expectedSnapshot := &repository.Snapshot{
 		AggregateID: expectedID,
 		Data:        serializedData,
-		Version:     expectedChanges[len(expectedChanges)-1].EventID,
+		Version:     expectedChanges[len(expectedChanges)-1].Version,
 		Timestamp:   time.Now().Unix(),
+		EventID:     expectedEventID,
 	}
 
 	// Setup mock expectations for SaveSnapshot with specific arguments
@@ -243,7 +250,8 @@ func (s *GenericRepositorySuite) TestSaveEvents_JSONMarshalError() {
 		GetChanges().
 		Return([]aggregate.RecordedEvent{
 			{
-				EventID:   1,
+				EventID:   uuid.New(),
+				Version:   1,
 				Timestamp: time.Now().Unix(),
 				Event:     make(chan int), // json.Marshal will fail on chan type
 			},
@@ -285,6 +293,7 @@ func (s *GenericRepositorySuite) TestLoadSnapshot_DeserializeError() {
 		Data:        []byte("invalid json"),
 		Version:     1,
 		Timestamp:   time.Now().Unix(),
+		EventID:     uuid.New(),
 	}
 	ctx := context.Background()
 
@@ -330,7 +339,7 @@ func (s *GenericRepositorySuite) TestRehydrate_EventManagerUnmarshalError() {
 			AggregateID: aggregateID,
 			Timestamp:   time.Now().Unix(),
 			EventType:   "UnknownEvent",
-			EventID:     1,
+			EventID:     uuid.New(),
 			Data:        []byte("{}"),
 		},
 	}

@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // RecordedEvent wraps a domain event with an EventID representing the aggregate's version
 type RecordedEvent struct {
-	EventID   int
+	EventID   uuid.UUID
+	Version   int
 	Timestamp int64
 	Event     DomainEventInterface
 }
@@ -59,13 +62,14 @@ func (ar *AggregateRoot) ApplyDomainEvent(ctx context.Context, event DomainEvent
 	}
 
 	// Assign EventID as the next version
-	eventID := ar.Version + 1
+	eventID := uuid.New()
 
 	// Wrap the event with EventID
 	recordedEvent := RecordedEvent{
 		EventID:   eventID,
 		Timestamp: time.Now().Unix(),
 		Event:     event,
+		Version:   ar.Version + 1,
 	}
 
 	ar.changes = append(ar.changes, recordedEvent)

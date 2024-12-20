@@ -21,4 +21,5 @@ type Snapshot struct {
 	Version     int       `json:"version"`
 	Data        []byte    `json:"data"`
 	Timestamp   int64     `json:"timestamp"`
+	EventID     uuid.UUID `json:"eventId"`
 }
