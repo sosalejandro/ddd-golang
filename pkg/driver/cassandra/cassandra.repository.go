@@ -191,19 +191,19 @@ func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID 
 	query := fmt.Sprintf(`SELECT aggregate_id, version, data, timestamp FROM %s WHERE aggregate_id = ? ORDER BY timestamp DESC LIMIT 1`, a.snapshotsTable)
 	iter := a.session.Query(query, aggregateID).WithContext(ctx).Iter()
 
-	if iter.Scan(&snapshot.AggregateID, &snapshot.Version, &snapshot.Data, &snapshot.Timestamp, &snapshot.EventID) {
+	// Check if the snapshot exists
+	if !iter.Scan(&snapshot.AggregateID, &snapshot.Version, &snapshot.Data, &snapshot.Timestamp, &snapshot.EventID) {
 		if err := iter.Close(); err != nil {
 			return nil, err
 		}
-
-		return snapshot, nil
+		return nil, fmt.Errorf("snapshot not found for aggregate ID: %s", aggregateID)
 	}
 
 	if err := iter.Close(); err != nil {
 		return nil, err
 	}
 
-	return nil, nil
+	return snapshot, nil
 }
 
 // SaveSnapshot implements the SaveSnapshot method of AggregateFuncsInterface.
