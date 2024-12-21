@@ -139,6 +139,10 @@ func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID 
 		return snapshot, nil
 	}
 
+	if err := iter.Close(); err != nil {
+		return nil, err
+	}
+
 	return nil, nil
 }
 

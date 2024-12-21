@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"time"
@@ -84,6 +85,11 @@ func (r *GenericRepository[T]) Rehydrate(ctx context.Context, aggregateId uuid.U
 		return aggregateRoot, err
 	}
 
+	// Check if events are empty
+	if len(events) == 0 {
+		return aggregateRoot, fmt.Errorf("no events found for aggregate ID: %s", aggregateId)
+	}
+
 	// domainEvents := make([]aggregate.RecordedEvent, 0)
 	iterErr := new(error)
 	domainEvents := slices.Collect(IterateIntoRecordedEvents(events, r.em, iterErr))
@@ -107,6 +113,11 @@ func (r *GenericRepository[T]) Load(ctx context.Context, aggregateId uuid.UUID) 
 	snapshot, err := r.repo.LoadSnapshot(ctx, aggregateId)
 	if err != nil {
 		return aggregateRoot, err
+	}
+
+	// Check if snapshot is nil
+	if snapshot == nil {
+		return aggregateRoot, fmt.Errorf("snapshot not found for aggregate ID: %s", aggregateId)
 	}
 
 	// Set the ID and deserialize snapshot
