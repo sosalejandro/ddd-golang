@@ -42,6 +42,22 @@ type AggregateFuncsCassandra struct {
 	latestEventTable  string
 	eventCountTable   string
 	eventVersionTable string
+	clusterHosts      []string
+}
+
+// Reconnect attempts to re-establish the Cassandra session.
+func (a *AggregateFuncsCassandra) Reconnect() error {
+	cluster := gocql.NewCluster(a.clusterHosts...)
+	cluster.Keyspace = a.keyspace
+	cluster.Consistency = gocql.Quorum
+
+	session, err := cluster.CreateSession()
+	if err != nil {
+		return fmt.Errorf("failed to reconnect to Cassandra: %w", err)
+	}
+
+	a.session = session
+	return nil
 }
 
 // NewAggregateFuncsCassandra initializes a new Cassandra-based AggregateFuncs.
@@ -63,11 +79,17 @@ func NewAggregateFuncsCassandra(clusterHosts []string, keyspace, latestEventTabl
 		latestEventTable:  latestEventTable,
 		eventCountTable:   eventCountTable,
 		eventVersionTable: eventVersionTable,
+		clusterHosts:      clusterHosts,
 	}, nil
 }
 
 // SaveEvents implements the SaveEvents method of AggregateFuncsInterface.
 func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.EventPayload) error {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return err
+		}
+	}
 	if len(events) == 0 {
 		return nil
 	}
@@ -124,6 +146,11 @@ func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.E
 
 // GetEvents implements the GetEvents method of AggregateFuncsInterface.
 func (a *AggregateFuncsCassandra) GetAggregateEvents(ctx context.Context, id uuid.UUID) ([]pkg.EventPayload, error) {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return nil, err
+		}
+	}
 	var eventsPayload []pkg.EventPayload
 	var eventID uuid.UUID
 	var eventType string
@@ -154,6 +181,11 @@ func (a *AggregateFuncsCassandra) GetAggregateEvents(ctx context.Context, id uui
 
 // LoadSnapshot implements the LoadSnapshot method of AggregateFuncsInterface.
 func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID uuid.UUID) (*repository.Snapshot, error) {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return nil, err
+		}
+	}
 	snapshot := new(repository.Snapshot)
 
 	query := fmt.Sprintf(`SELECT aggregateId, version, data, timestamp FROM %s WHERE aggregateId = ? ORDER BY timestamp DESC LIMIT 1`, a.snapshotsTable)
@@ -167,11 +199,20 @@ func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID 
 		return snapshot, nil
 	}
 
+	if err := iter.Close(); err != nil {
+		return nil, err
+	}
+
 	return nil, nil
 }
 
 // SaveSnapshot implements the SaveSnapshot method of AggregateFuncsInterface.
 func (a *AggregateFuncsCassandra) SaveSnapshot(ctx context.Context, snapshot *repository.Snapshot) error {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return err
+		}
+	}
 	batch := a.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	query := fmt.Sprintf(`INSERT INTO %s (aggregate_id, data, version, timestamp) VALUES (?, ?, ?, ?)`, a.snapshotsTable)
@@ -199,6 +240,11 @@ func (a *AggregateFuncsCassandra) Close() error {
 
 // GetEventCount retrieves the event count for an aggregate.
 func (a *AggregateFuncsCassandra) GetEventCount(ctx context.Context, aggregateID uuid.UUID) (int, error) {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return 0, err
+		}
+	}
 	var eventCount int
 	query := fmt.Sprintf(`SELECT event_count FROM %s WHERE aggregate_id = ?`, a.eventCountTable)
 	if err := a.session.Query(query, aggregateID).WithContext(ctx).Scan(&eventCount); err != nil {
@@ -209,6 +255,11 @@ func (a *AggregateFuncsCassandra) GetEventCount(ctx context.Context, aggregateID
 
 // GetLatestEventVersion retrieves the latest event version for an aggregate.
 func (a *AggregateFuncsCassandra) GetLatestEventVersion(ctx context.Context, aggregateID uuid.UUID) (int, error) {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return 0, err
+		}
+	}
 	var latestVersion int
 	query := fmt.Sprintf(`SELECT event_version FROM %s WHERE aggregate_id = ? ORDER BY event_version DESC LIMIT 1`, a.eventVersionTable)
 	if err := a.session.Query(query, aggregateID).WithContext(ctx).Scan(&latestVersion); err != nil {
@@ -219,6 +270,11 @@ func (a *AggregateFuncsCassandra) GetLatestEventVersion(ctx context.Context, agg
 
 // ValidateAggregateConsistency checks if the aggregate is consistent.
 func (a *AggregateFuncsCassandra) ValidateAggregateConsistency(ctx context.Context, aggregateID uuid.UUID) (bool, error) {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return false, err
+		}
+	}
 	eventCount, err := a.GetEventCount(ctx, aggregateID)
 	if err != nil {
 		return false, err
@@ -238,6 +294,11 @@ func (a *AggregateFuncsCassandra) ValidateAggregateConsistency(ctx context.Conte
 
 // GetAllAggregateIDs retrieves all aggregate IDs.
 func (a *AggregateFuncsCassandra) GetAllAggregateIDs(ctx context.Context) ([]uuid.UUID, error) {
+	if a.session == nil {
+		if err := a.Reconnect(); err != nil {
+			return nil, err
+		}
+	}
 	var aggregateIDs []uuid.UUID
 	query := fmt.Sprintf(`SELECT aggregate_id FROM %s`, a.eventCountTable)
 	iter := a.session.Query(query).WithContext(ctx).Iter()
@@ -262,7 +323,7 @@ func (a *AggregateFuncsCassandra) GetAllAggregateIDs(ctx context.Context) ([]uui
 //             continue
 //         }
 
-//         if !isValid {
+//         if (!isValid) {
 //             log.Printf("Inconsistent aggregate detected: %s", aggregateID)
 //             // Handle inconsistency (e.g., alert, fix, etc.)
 //         } else {
