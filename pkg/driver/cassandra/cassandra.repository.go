@@ -68,8 +68,17 @@ func NewAggregateFuncsCassandra(clusterHosts []string, keyspace, latestEventTabl
 
 // SaveEvents implements the SaveEvents method of AggregateFuncsInterface.
 func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.EventPayload) error {
-	batch := a.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
-	for _, event := range events {
+	if len(events) == 0 {
+		return nil
+	}
+	// iterateEvent Iterates over the events within a batch operation inserting into the events table and the aggregate_events_version table
+	var iterateEvent func(ctx context.Context, batch *gocql.Batch, event pkg.EventPayload)
+	// saveLatestEventQuery Updates the aggregate_latest_event table with the latest event
+	var saveLatestEventQuery func(ctx context.Context, batch *gocql.Batch, latestEvent pkg.EventPayload)
+	// saveEventCountQuery Updates the aggregate_event_count table
+	var saveEventCountQuery func(ctx context.Context, batch *gocql.Batch, eventCount int, aggregateID uuid.UUID)
+
+	iterateEvent = func(ctx context.Context, batch *gocql.Batch, event pkg.EventPayload) {
 		query := fmt.Sprintf(`INSERT INTO %s (aggregateId, eventId, eventType, data, timestamp) VALUES (?, ?, ?, ?, ?)`, a.eventsTable)
 		batch.Query(query, event.AggregateID, event.EventID, event.EventType, event.Data, event.Timestamp)
 
@@ -78,17 +87,36 @@ func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.E
 		batch.Query(versionQuery, event.AggregateID, event.EventID, event.Version, event.Timestamp)
 	}
 
+	// saveLatestEventQuery Updates the aggregate_latest_event table with the latest event
+	saveLatestEventQuery = func(ctx context.Context, batch *gocql.Batch, latestEvent pkg.EventPayload) {
+		latestEventQuery := fmt.Sprintf(`UPDATE %s SET latest_event_id = ?, timestamp = ? WHERE aggregate_id = ?`, a.latestEventTable)
+		batch.Query(latestEventQuery, latestEvent.EventID, latestEvent.Timestamp, latestEvent.AggregateID)
+	}
+
+	// saveEventCountQuery Updates the aggregate_event_count table
+	saveEventCountQuery = func(ctx context.Context, batch *gocql.Batch, eventCount int, aggregateID uuid.UUID) {
+		eventCountQuery := fmt.Sprintf(`UPDATE %s SET event_count = ? WHERE aggregate_id = ?`, a.eventCountTable)
+		batch.Query(eventCountQuery, eventCount, aggregateID)
+	}
+
+	batch := a.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
+	for _, event := range events {
+		iterateEvent(ctx, batch, event)
+	}
+
 	// Update the aggregate_latest_event table with the latest event
 	latestEvent := events[len(events)-1]
-	latestEventQuery := fmt.Sprintf(`UPDATE %s SET latest_event_id = ?, timestamp = ? WHERE aggregate_id = ?`, a.latestEventTable)
-	batch.Query(latestEventQuery, latestEvent.EventID, latestEvent.Timestamp, latestEvent.AggregateID)
+	saveLatestEventQuery(ctx, batch, latestEvent)
 
-	// Update the aggregate_event_count table
-	eventCountQuery := fmt.Sprintf(`UPDATE %s SET event_count = event_count + ? WHERE aggregate_id = ?`, a.eventCountTable)
-	batch.Query(eventCountQuery, len(events), latestEvent.AggregateID)
+	saveEventCountQuery(ctx, batch, len(events), latestEvent.AggregateID)
 
-	if err := a.session.ExecuteBatch(batch); err != nil {
-		return fmt.Errorf("failed to execute batch: %w", err)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		if err := a.session.ExecuteBatch(batch); err != nil {
+			return fmt.Errorf("failed to execute batch: %w", err)
+		}
 	}
 
 	return nil
@@ -137,10 +165,6 @@ func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID 
 		}
 
 		return snapshot, nil
-	}
-
-	if err := iter.Close(); err != nil {
-		return nil, err
 	}
 
 	return nil, nil
