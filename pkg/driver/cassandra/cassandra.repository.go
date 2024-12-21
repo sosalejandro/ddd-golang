@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	gocql "github.com/gocql/gocql"
+	"github.com/gocql/gocql"
 	"github.com/google/uuid"
 	pkg "github.com/sosalejandro/ddd-golang/pkg/event-manager"
 	"github.com/sosalejandro/ddd-golang/pkg/repository"
@@ -98,25 +98,25 @@ func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.E
 	// saveLatestEventQuery Updates the aggregate_latest_event table with the latest event
 	var saveLatestEventQuery func(ctx context.Context, batch *gocql.Batch, latestEvent pkg.EventPayload)
 	// saveEventCountQuery Updates the aggregate_event_count table
-	var saveEventCountQuery func(ctx context.Context, batch *gocql.Batch, eventCount int, aggregateID uuid.UUID)
+	var saveEventCountQuery func(ctx context.Context, batch *gocql.Batch, eventCount int, aggregateID gocql.UUID)
 
 	iterateEvent = func(ctx context.Context, batch *gocql.Batch, event pkg.EventPayload) {
 		query := fmt.Sprintf(`INSERT INTO %s (aggregate_id, event_id, event_type, data, timestamp) VALUES (?, ?, ?, ?, ?)`, a.eventsTable)
-		batch.Query(query, event.AggregateID, event.EventID, event.EventType, event.Data, event.Timestamp)
+		batch.Query(query, gocql.UUID(event.AggregateID), gocql.UUID(event.EventID), event.EventType, event.Data, event.Timestamp)
 
 		// Insert into aggregate_events_version table
 		versionQuery := fmt.Sprintf(`INSERT INTO %s (aggregate_id, event_id, event_version, timestamp) VALUES (?, ?, ?, ?)`, a.eventVersionTable)
-		batch.Query(versionQuery, event.AggregateID, event.EventID, event.Version, event.Timestamp)
+		batch.Query(versionQuery, gocql.UUID(event.AggregateID), gocql.UUID(event.EventID), event.Version, event.Timestamp)
 	}
 
 	// saveLatestEventQuery Updates the aggregate_latest_event table with the latest event
 	saveLatestEventQuery = func(ctx context.Context, batch *gocql.Batch, latestEvent pkg.EventPayload) {
 		latestEventQuery := fmt.Sprintf(`UPDATE %s SET latest_event_id = ?, timestamp = ? WHERE aggregate_id = ?`, a.latestEventTable)
-		batch.Query(latestEventQuery, latestEvent.EventID, latestEvent.Timestamp, latestEvent.AggregateID)
+		batch.Query(latestEventQuery, gocql.UUID(latestEvent.EventID), latestEvent.Timestamp, gocql.UUID(latestEvent.AggregateID))
 	}
 
 	// saveEventCountQuery Updates the aggregate_event_count table
-	saveEventCountQuery = func(ctx context.Context, batch *gocql.Batch, eventCount int, aggregateID uuid.UUID) {
+	saveEventCountQuery = func(ctx context.Context, batch *gocql.Batch, eventCount int, aggregateID gocql.UUID) {
 		eventCountQuery := fmt.Sprintf(`UPDATE %s SET event_count = ? WHERE aggregate_id = ?`, a.eventCountTable)
 		batch.Query(eventCountQuery, eventCount, aggregateID)
 	}
@@ -130,7 +130,7 @@ func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.E
 	latestEvent := events[len(events)-1]
 	saveLatestEventQuery(ctx, batch, latestEvent)
 
-	saveEventCountQuery(ctx, batch, len(events), latestEvent.AggregateID)
+	saveEventCountQuery(ctx, batch, len(events), gocql.UUID(latestEvent.AggregateID))
 
 	select {
 	case <-ctx.Done():
@@ -144,7 +144,7 @@ func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.E
 	return nil
 }
 
-// GetEvents implements the GetEvents method of AggregateFuncsInterface.
+// GetAggregateEvents implements the GetAggregateEvents method of AggregateFuncsInterface.
 func (a *AggregateFuncsCassandra) GetAggregateEvents(ctx context.Context, id uuid.UUID) ([]pkg.EventPayload, error) {
 	if a.session == nil {
 		if err := a.Reconnect(); err != nil {
@@ -152,7 +152,7 @@ func (a *AggregateFuncsCassandra) GetAggregateEvents(ctx context.Context, id uui
 		}
 	}
 	var eventsPayload []pkg.EventPayload
-	var eventID uuid.UUID
+	var eventID gocql.UUID
 	var eventType string
 	var timestamp int64
 	var data []byte
@@ -160,11 +160,11 @@ func (a *AggregateFuncsCassandra) GetAggregateEvents(ctx context.Context, id uui
 
 	query := fmt.Sprintf(`SELECT event_id, event_type, data, timestamp FROM %s WHERE aggregate_id = ? ORDER BY timestamp ASC`, a.eventsTable)
 
-	iter := a.session.Query(query, id).WithContext(ctx).Iter()
+	iter := a.session.Query(query, gocql.UUID(id)).WithContext(ctx).Iter()
 	for iter.Scan(&eventID, &eventType, &data, &timestamp, &version) {
 		eventsPayload = append(eventsPayload, pkg.EventPayload{
 			AggregateID: id,
-			EventID:     eventID,
+			EventID:     uuid.UUID(eventID),
 			EventType:   eventType,
 			Data:        data,
 			Timestamp:   timestamp,
@@ -189,7 +189,7 @@ func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID 
 	snapshot := new(repository.Snapshot)
 
 	query := fmt.Sprintf(`SELECT aggregate_id, version, data, timestamp FROM %s WHERE aggregate_id = ? ORDER BY timestamp DESC LIMIT 1`, a.snapshotsTable)
-	iter := a.session.Query(query, aggregateID).WithContext(ctx).Iter()
+	iter := a.session.Query(query, gocql.UUID(aggregateID)).WithContext(ctx).Iter()
 
 	// Check if the snapshot exists
 	if !iter.Scan(&snapshot.AggregateID, &snapshot.Version, &snapshot.Data, &snapshot.Timestamp, &snapshot.EventID) {
@@ -198,6 +198,10 @@ func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID 
 		}
 		return nil, fmt.Errorf("snapshot not found for aggregate ID: %s", aggregateID)
 	}
+
+	// Convert gocql.UUID to uuid.UUID
+	snapshot.AggregateID = uuid.UUID(snapshot.AggregateID)
+	snapshot.EventID = uuid.UUID(snapshot.EventID)
 
 	if err := iter.Close(); err != nil {
 		return nil, err
@@ -216,11 +220,11 @@ func (a *AggregateFuncsCassandra) SaveSnapshot(ctx context.Context, snapshot *re
 	batch := a.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	query := fmt.Sprintf(`INSERT INTO %s (aggregate_id, data, version, timestamp) VALUES (?, ?, ?, ?)`, a.snapshotsTable)
-	batch.Query(query, snapshot.AggregateID, snapshot.Data, snapshot.Version, snapshot.Timestamp)
+	batch.Query(query, gocql.UUID(snapshot.AggregateID), snapshot.Data, snapshot.Version, snapshot.Timestamp)
 
 	// Update the aggregate_latest_event table
 	latestEventQuery := fmt.Sprintf(`INSERT INTO %s (aggregate_id, latest_event_id) VALUES (?, ?)`, a.latestEventTable)
-	batch.Query(latestEventQuery, snapshot.AggregateID, snapshot.EventID)
+	batch.Query(latestEventQuery, gocql.UUID(snapshot.AggregateID), gocql.UUID(snapshot.EventID))
 
 	if err := a.session.ExecuteBatch(batch); err != nil {
 		return fmt.Errorf("failed to execute batch: %w", err)
@@ -247,7 +251,7 @@ func (a *AggregateFuncsCassandra) GetEventCount(ctx context.Context, aggregateID
 	}
 	var eventCount int
 	query := fmt.Sprintf(`SELECT event_count FROM %s WHERE aggregate_id = ?`, a.eventCountTable)
-	if err := a.session.Query(query, aggregateID).WithContext(ctx).Scan(&eventCount); err != nil {
+	if err := a.session.Query(query, gocql.UUID(aggregateID)).WithContext(ctx).Scan(&eventCount); err != nil {
 		return 0, fmt.Errorf("failed to retrieve event count: %w", err)
 	}
 	return eventCount, nil
@@ -262,7 +266,7 @@ func (a *AggregateFuncsCassandra) GetLatestEventVersion(ctx context.Context, agg
 	}
 	var latestVersion int
 	query := fmt.Sprintf(`SELECT event_version FROM %s WHERE aggregate_id = ? ORDER BY event_version DESC LIMIT 1`, a.eventVersionTable)
-	if err := a.session.Query(query, aggregateID).WithContext(ctx).Scan(&latestVersion); err != nil {
+	if err := a.session.Query(query, gocql.UUID(aggregateID)).WithContext(ctx).Scan(&latestVersion); err != nil {
 		return 0, fmt.Errorf("failed to retrieve latest event version: %w", err)
 	}
 	return latestVersion, nil
@@ -299,7 +303,7 @@ func (a *AggregateFuncsCassandra) GetAllAggregateIDs(ctx context.Context) ([]uui
 			return nil, err
 		}
 	}
-	var aggregateIDs []uuid.UUID
+	var aggregateIDs []gocql.UUID
 	query := fmt.Sprintf(`SELECT aggregate_id FROM %s`, a.eventCountTable)
 	iter := a.session.Query(query).WithContext(ctx).Iter()
 	for iter.Scan(&aggregateIDs) {
@@ -307,7 +311,14 @@ func (a *AggregateFuncsCassandra) GetAllAggregateIDs(ctx context.Context) ([]uui
 	if err := iter.Close(); err != nil {
 		return nil, err
 	}
-	return aggregateIDs, nil
+
+	// Convert gocql.UUID to uuid.UUID
+	var result []uuid.UUID
+	for _, id := range aggregateIDs {
+		result = append(result, uuid.UUID(id))
+	}
+
+	return result, nil
 }
 
 // func (s *Scheduler) ValidateAggregates(ctx context.Context) {
