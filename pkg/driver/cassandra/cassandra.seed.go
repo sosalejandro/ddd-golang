@@ -37,12 +37,12 @@ func SeedDatabase(clusterHosts []string, keyspace string) error {
 	// Create tables
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS aggregate_events (
-			aggregateId UUID,
-			eventId UUID,
-			eventType TEXT,
+			aggregate_id UUID,
+			event_id UUID,
+			event_type TEXT,
 			data BLOB,
 			timestamp TIMESTAMP,
-			PRIMARY KEY (aggregateId, timestamp)
+			PRIMARY KEY (aggregate_id, timestamp)
 		) WITH CLUSTERING ORDER BY (timestamp ASC);`,
 		`CREATE TABLE IF NOT EXISTS aggregate_latest_event (
 			aggregate_id UUID,

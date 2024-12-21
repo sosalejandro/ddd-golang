@@ -101,7 +101,7 @@ func (a *AggregateFuncsCassandra) SaveEvents(ctx context.Context, events []pkg.E
 	var saveEventCountQuery func(ctx context.Context, batch *gocql.Batch, eventCount int, aggregateID uuid.UUID)
 
 	iterateEvent = func(ctx context.Context, batch *gocql.Batch, event pkg.EventPayload) {
-		query := fmt.Sprintf(`INSERT INTO %s (aggregateId, eventId, eventType, data, timestamp) VALUES (?, ?, ?, ?, ?)`, a.eventsTable)
+		query := fmt.Sprintf(`INSERT INTO %s (aggregate_id, event_id, event_type, data, timestamp) VALUES (?, ?, ?, ?, ?)`, a.eventsTable)
 		batch.Query(query, event.AggregateID, event.EventID, event.EventType, event.Data, event.Timestamp)
 
 		// Insert into aggregate_events_version table
@@ -158,7 +158,7 @@ func (a *AggregateFuncsCassandra) GetAggregateEvents(ctx context.Context, id uui
 	var data []byte
 	var version int
 
-	query := fmt.Sprintf(`SELECT eventId, eventType, data, timestamp FROM %s WHERE aggregateId = ? ORDER BY timestamp ASC`, a.eventsTable)
+	query := fmt.Sprintf(`SELECT event_id, event_type, data, timestamp FROM %s WHERE aggregate_id = ? ORDER BY timestamp ASC`, a.eventsTable)
 
 	iter := a.session.Query(query, id).WithContext(ctx).Iter()
 	for iter.Scan(&eventID, &eventType, &data, &timestamp, &version) {
@@ -188,7 +188,7 @@ func (a *AggregateFuncsCassandra) LoadSnapshot(ctx context.Context, aggregateID 
 	}
 	snapshot := new(repository.Snapshot)
 
-	query := fmt.Sprintf(`SELECT aggregateId, version, data, timestamp FROM %s WHERE aggregateId = ? ORDER BY timestamp DESC LIMIT 1`, a.snapshotsTable)
+	query := fmt.Sprintf(`SELECT aggregate_id, version, data, timestamp FROM %s WHERE aggregate_id = ? ORDER BY timestamp DESC LIMIT 1`, a.snapshotsTable)
 	iter := a.session.Query(query, aggregateID).WithContext(ctx).Iter()
 
 	if iter.Scan(&snapshot.AggregateID, &snapshot.Version, &snapshot.Data, &snapshot.Timestamp, &snapshot.EventID) {
